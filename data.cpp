@@ -1,3 +1,7 @@
+// comp := g++ data.cpp /home/jyh/.local/include/cpglib/print.o -o data -O1 -std=gnu++20 -Wall -Wextra -Wshadow -D_GLIBCXX_ASSERTIONS -fmax-errors=2 -DLOCAL
+// run  := ./data 190 30 1.5 3 dp 3
+// dir  := .
+// kid  :=
 #include <bits/stdc++.h>
 #include <format>
 #include <cassert>
@@ -442,6 +446,10 @@ struct GraphOpt {
         Vertex() = default;
 
         array<vector<pair<double, Vertex*>>, 3> nxt;
+
+        bool operator <(const Vertex &v) const {
+            return tie(ball_cnt, capture_level, flee_level, round) < tie(v.ball_cnt, v.capture_level, v.flee_level, v.round);
+        }
     };
 
     vector<Vertex> vertices;
@@ -625,10 +633,10 @@ struct GraphOpt {
         printf("The best decision is %s with probability %.3Lf%%\n", decision.c_str(), result*100);
     }
 
-    void dynamic_programming() {
-        double init_p_ball = -1, init_p_bait = -1, init_p_mud = -1;
+    vector<vector<vector<vector<double>>>> dp;
+    void dp_init() {
         int IBC = start->ball_cnt;
-        vector<vector<vector<vector<double>>>> dp(IBC+1, vector<vector<vector<double>>>(LEVEL_ALL, vector<vector<double>>(LEVEL_ALL, vector<double>(round_max, 0))));
+        dp.assign(IBC+1, vector<vector<vector<double>>>(LEVEL_ALL, vector<vector<double>>(LEVEL_ALL, vector<double>(round_max, 0))));
         for (int bc = 1; bc <= IBC; ++bc) {
             for (int r = round_max-1; r >= 0; --r) {
                 for (int cl = -LEVEL_MAX; cl <= LEVEL_MAX; ++cl) {
@@ -641,21 +649,84 @@ struct GraphOpt {
                             double p_mud = 0.9 * (1.0-P_fled(min(fl+1, LEVEL_MAX))) * dp[bc][min(cl+1, LEVEL_MAX)+LEVEL_MAX][min(fl+1, LEVEL_MAX)+LEVEL_MAX][r+1] + \
                                 0.1*(1.0-P_fled(fl)) * dp[bc][min(cl+1, LEVEL_MAX)+LEVEL_MAX][fl+LEVEL_MAX][r+1];
                             dp[bc][cl+LEVEL_MAX][fl+LEVEL_MAX][r] = max({p_ball, p_bait, p_mud});
-                            if (bc == IBC && cl == 0 && fl == 0 && r == 0) init_p_ball = p_ball, init_p_bait = p_bait, init_p_mud = p_mud;
                         }
                     }
                 }
             }
         }
-        string decision;
-        if (init_p_ball >= init_p_bait && init_p_ball >= init_p_mud) decision = decision_name(Action::BALL);
-        else if (init_p_bait >= init_p_ball && init_p_bait >= init_p_mud) decision = decision_name(Action::BAIT);
-        else if (init_p_mud >= init_p_ball && init_p_mud >= init_p_bait) decision = decision_name(Action::MUD);
-        else assert(false);
-        printf("Decision %s with probability %.3Lf%%\n", decision_name(Action::BALL).c_str(), init_p_ball*100);
-        printf("Decision %s with probability %.3Lf%%\n", decision_name(Action::BAIT).c_str(), init_p_bait*100);
-        printf("Decision %s with probability %.3Lf%%\n", decision_name(Action::MUD).c_str(), init_p_mud*100);
-        printf("The best decision is %s with probability %.3Lf%%\n", decision.c_str(), dp[IBC][LEVEL_MAX][LEVEL_MAX][0]*100);
+    }
+
+    vector<Vertex> print_decision(int bc, int r, int cl, int fl) {
+        set<Vertex> s;
+        printf("current state:\n");
+        printf("  - ball count: %lld\n", bc);
+        printf("  - round: %lld\n", r);
+        printf("  - capture level: %lld\n", cl);
+        printf("  - flee level: %lld\n", fl);
+        printf("\n");
+        if (r == round_max-1) {
+            double p = P_caught(cl) + (1-P_caught(cl))*(1-P_fled(fl))*dp[bc-1][cl+LEVEL_MAX][fl+LEVEL_MAX][0];
+            s.insert(Vertex(bc-1, cl, fl, 0));
+            printf("Decision %s with probability %.3Lf%%\n", decision_name(Action::BALL).c_str(), p*100);
+            printf("The best decision is %s with probability %.3Lf%%\n", decision_name(Action::BALL).c_str(), p*100);
+        }
+        else {
+            double p_ball = P_caught(cl) + (1-P_caught(cl))*(1-P_fled(fl))*dp[bc-1][cl+LEVEL_MAX][fl+LEVEL_MAX][0];
+            double p_bait = 0.9 * (1.0-P_fled(max(fl-1, -LEVEL_MAX))) * dp[bc][max(cl-1, -LEVEL_MAX)+LEVEL_MAX][max(fl-1, -LEVEL_MAX)+LEVEL_MAX][r+1] + \
+                0.1 * (1.0-P_fled(max(fl-1, -LEVEL_MAX))) * dp[bc][cl+LEVEL_MAX][max(fl-1, -LEVEL_MAX)+LEVEL_MAX][r+1];
+            double p_mud = 0.9 * (1.0-P_fled(min(fl+1, LEVEL_MAX))) * dp[bc][min(cl+1, LEVEL_MAX)+LEVEL_MAX][min(fl+1, LEVEL_MAX)+LEVEL_MAX][r+1] + \
+                0.1*(1.0-P_fled(fl)) * dp[bc][min(cl+1, LEVEL_MAX)+LEVEL_MAX][fl+LEVEL_MAX][r+1];
+            string decision;
+            if (p_ball >= p_bait && p_ball >= p_mud) {
+                s.insert(Vertex(bc-1, cl, fl, 0));
+                decision = decision_name(Action::BALL);
+            }
+            else if (p_bait >= p_ball && p_bait >= p_mud) {
+                s.insert(Vertex(bc, max(cl-1, -LEVEL_MAX), max(fl-1, -LEVEL_MAX), r+1));
+                s.insert(Vertex(bc, cl, max(fl-1, -LEVEL_MAX), r+1));
+                decision = decision_name(Action::BAIT);
+            }
+            else if (p_mud >= p_ball && p_mud >= p_bait) {
+                s.insert(Vertex(bc, min(cl+1, LEVEL_MAX), min(fl+1, LEVEL_MAX), r+1));
+                s.insert(Vertex(bc, min(cl+1, LEVEL_MAX), fl, r+1));
+                decision = decision_name(Action::MUD);
+            }
+            else assert(false);
+            printf("- Decision %s with probability %.3Lf%%\n", decision_name(Action::BALL).c_str(), p_ball*100);
+            printf("- Decision %s with probability %.3Lf%%\n", decision_name(Action::BAIT).c_str(), p_bait*100);
+            printf("- Decision %s with probability %.3Lf%%\n", decision_name(Action::MUD).c_str(), p_mud*100);
+            printf("The best decision is %s with probability %.3Lf%%\n", decision.c_str(), dp[bc][r+LEVEL_MAX][cl+LEVEL_MAX][fl]*100);
+        }
+        vector<Vertex> vs = vector<Vertex>(s.begin(), s.end());
+        return vs;
+    }
+
+    void dynamic_programming() {
+        dp_init();
+        int bc = start->ball_cnt, r = start->round, cl = start->capture_level, fl = start->flee_level;
+        while (true) {
+            if (bc == 0) break;
+            auto s = print_decision(bc, r, cl, fl);
+            if (s.size() == 0) break;
+            printf("\n");
+            printf("There are %lld outcomes of the best decision:\n", (int)s.size());
+            for (int i = 0; i < (int)s.size(); ++i) {
+                printf("%lld. ", i+1);
+                printf("ball count: %lld, ", s[i].ball_cnt);
+                printf("round: %lld, ", s[i].round);
+                printf("capture level: %lld, ", s[i].capture_level);
+                printf("flee level: %lld\n", s[i].flee_level);
+            }
+            string input;
+            printf("Select the next state (1-%lld):\n", (int)s.size());
+            cin >> input;
+            int idx = stoi(input);
+            bc = s[idx-1].ball_cnt;
+            r = s[idx-1].round;
+            cl = s[idx-1].capture_level;
+            fl = s[idx-1].flee_level;
+            printf("\n\n");
+        }
     }
 
     void graphviz_dump(string filename) {
